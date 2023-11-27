@@ -1,4 +1,4 @@
-import bandit.UCB
+import bandit.BayesMAB
 import bandit.UCB_1
 import bandit.UCB_2
 import bandit.UCB_noprior
