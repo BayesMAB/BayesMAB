@@ -12,5 +12,4 @@ class Registry(object):
         return self._registry[name]
 
 
-# 创建一个全局的注册表实例
 registry = Registry()

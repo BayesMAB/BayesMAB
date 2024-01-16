@@ -7,5 +7,5 @@ import bandit.MOSS
 import bandit.thompsonSampling
 import bandit.epsilonGreedy
 import bandit.UCB_network
+import bandit.BayesUCB
 import bandit.hierarchicalThompsonSampling
-import bandit.bayesUCB

@@ -1,4 +1,4 @@
-# 参考：https://www.aionlinecourse.com/tutorial/machine-learning/thompson-sampling-intuition
+# https://www.aionlinecourse.com/tutorial/machine-learning/thompson-sampling-intuition
 
 
 import json
@@ -6,7 +6,7 @@ import logging
 import math
 import multiprocessing
 import numpy as np
-from configs.config import PLTV_LEVEL, max_search_num, max_sampling_freq, sample_ratio, Multi_Process, Environment, No_pltv, MAB_SAVE_STEP
+from configs.config import max_search_num, max_sampling_freq, Multi_Process, Environment, MAB_SAVE_STEP
 import copy
 from collections import defaultdict
 import pandas as pd
@@ -36,103 +36,42 @@ else:
 @registry.register('HierarchicalThompsonSamplingBandit')
 class HierarchicalThompsonSamplingBandit(object):
     """
-    bid shading 主类
+    bid shading
     """
 
     def __init__(self):
         """
-        初始化
+
         """
 
-    def calculate_market_price(self, media_app_id, position_id, market_price_dict,
-                               impression_price_dict, no_impression_price, norm_dict, optimal_ratio_dict,
-                               data_pd):
-        """
-        计算市场价格
-        :params market_price_dict = {pltv:value}
-        :params impression_price_dict = {pltv:value_list}
-        :params no_impression_price = {pltv:value_list}  响应未曝光数据
-        """
+    def calculate_market_price(self, media_app_id, position_id, market_price_dict, impression_price_dict,
+                               no_impression_price, norm_dict, optimal_ratio_dict, data_pd):
 
-        # """分pltv计算"""
-        if not No_pltv:
-            for level in PLTV_LEVEL:
-                market_price_value = -1.0
-                impression_price_list = []
-                no_impression_price_list = []
-                if level in market_price_dict:
-                    market_price_value = market_price_dict[level]
+        market_price_value = round(np.mean(market_price_dict), 2)
+        impression_price_list = impression_price_dict
+        no_impression_price_list = no_impression_price
+        impression_price_list = sorted(impression_price_list, reverse=False)
+        no_impression_price_list = sorted(no_impression_price_list, reverse=False)
 
-                if level in impression_price_dict:
-                    impression_price_list = sorted(impression_price_dict[level], reverse=False)
-
-                if level in no_impression_price:
-                    no_impression_price_list = sorted(no_impression_price[level], reverse=False)
-
-                if market_price_value == -1.0 or len(impression_price_list) < 100:
-                    logging.debug(f"proc_id={multiprocessing.current_process().name},"
-                                  f"media_app_id:{media_app_id}, position_id:{position_id}, level:{level},"
-                                  f"len(impression_price_list):{len(impression_price_list)} < 10, data is sparse "
-                                  f"enough to compute")
-                    continue
-
-                # e-e
-                # market_price 市场价格
-                # chosen_count_map = {}  # 记录选择次数
-                # imp_count_map = {}  # 记录曝光次数
-                market_price, chosen_count_map, imp_count_map = self.bandit(media_app_id,
-                                                                            position_id,
-                                                                            norm_dict[level],
-                                                                            market_price_value,
-                                                                            impression_price_list,
-                                                                            no_impression_price_list)
-
-                logging.info(f"proc_id={multiprocessing.current_process().name},"
-                             f"media_app_id:{media_app_id}, position_id:{position_id}, level:{level}, "
-                             f"history_median_price_value:{market_price_value}, market_price:{market_price}，"
-                             f"len impression_price_list:{len(impression_price_list)}, "
-                             f"len no_impression_price_list:{len(no_impression_price_list)}")
-
-                optimal_ratio_dict = self.save_bandit_result(media_app_id, position_id, level,
-                                                             market_price, chosen_count_map, imp_count_map,
-                                                             norm_dict, optimal_ratio_dict)
+        if market_price_value == -1.0 or len(impression_price_list) < 100:
+            logging.debug(f"proc_id={multiprocessing.current_process().name},"
+                          f"media_app_id:{media_app_id}, position_id:{position_id}, level: None,"
+                          f"len(impression_price_list):{len(impression_price_list)} < 10, data is sparse "
+                          f"enough to compute")
         else:
-            # """计算position默认值 """
-            market_price_value = round(np.mean(market_price_dict), 2)
-            impression_price_list = impression_price_dict
-            no_impression_price_list = no_impression_price
-            impression_price_list = sorted(impression_price_list, reverse=False)
-            no_impression_price_list = sorted(no_impression_price_list, reverse=False)
+            market_price, chosen_count_map, imp_count_map, true_imp_count_map,true_chosen_count_map,\
+                revenue_rate_list, optimal_ratio_dict = self.bandit(media_app_id, position_id, norm_dict,
+                                                                    market_price_value,
+                                                                    impression_price_list,
+                                                                    no_impression_price_list,
+                                                                    data_pd,
+                                                                    optimal_ratio_dict)
 
-            if market_price_value == -1.0 or len(impression_price_list) < 100:
-                logging.debug(f"proc_id={multiprocessing.current_process().name},"
-                              f"media_app_id:{media_app_id}, position_id:{position_id}, level: None,"
-                              f"len(impression_price_list):{len(impression_price_list)} < 10, data is sparse "
-                              f"enough to compute")
-            else:
-                # e-e
-                # market_price 市场价格
-                # chosen_count_map = {}  # 记录选择次数
-                # imp_count_map = {}  # 记录曝光次数
-                market_price, chosen_count_map, imp_count_map, true_imp_count_map,true_chosen_count_map,\
-                    revenue_rate_list, optimal_ratio_dict = self.bandit(media_app_id,
-                                                                        position_id,
-                                                                        norm_dict,
-                                                                        market_price_value,
-                                                                        impression_price_list,
-                                                                        no_impression_price_list,
-                                                                        data_pd,
-                                                                        optimal_ratio_dict)
-
-                logging.info(f"calculate default data proc_id={multiprocessing.current_process().name},"
-                             f"media_app_id:{media_app_id}, position_id:{position_id},"
-                             f"history_median_price_value:{market_price_value}, market_price:{market_price}，"
-                             f"len impression_price_list:{len(impression_price_list)}, "
-                             f"len no_impression_price_list:{len(no_impression_price_list)}")
-
-                # optimal_ratio_dict = self.save_bandit_result(media_app_id, position_id, -1,
-                #                                              market_price, chosen_count_map, imp_count_map,
-                #                                              norm_dict, optimal_ratio_dict)
+            logging.info(f"calculate default data proc_id={multiprocessing.current_process().name},"
+                         f"media_app_id:{media_app_id}, position_id:{position_id},"
+                         f"history_median_price_value:{market_price_value}, market_price:{market_price}，"
+                         f"len impression_price_list:{len(impression_price_list)}, "
+                         f"len no_impression_price_list:{len(no_impression_price_list)}")
 
         return optimal_ratio_dict
 
@@ -189,9 +128,6 @@ class HierarchicalThompsonSamplingBandit(object):
         return optimal_ratio_dict
 
     def calculate_reward_weigth(self, price, market_price_value, right_range, left_range):
-        """
-        计算reward权重
-        """
         reward = 0.01
         if market_price_value * 0.9 < price <= market_price_value * 1.1:
             reward = 0.9
@@ -207,39 +143,27 @@ class HierarchicalThompsonSamplingBandit(object):
         return reward
 
     def calculate_reward_weigt_quadratic(self, price, market_price_value):
-        """
-        计算reward权重
-        """
-
         reward = 1 / np.exp(np.abs(price - market_price_value))
 
         return reward
 
     def bandit_init(self, impression_price_list, no_impression_price_list, market_price_value):
-        """
-        # bandit 初始化
-        """
-        estimared_rewards_map = {}  # 记录reward
-        chosen_count_map = {}  # 记录选择次数
-        imp_count_map = {}  # 记录曝光次数
+        estimared_rewards_map = {}
+        chosen_count_map = {}
+        imp_count_map = {}
 
-        # right_range = max(abs(impression_price_list[-1] - market_price_value), 1)
-        # left_range = max(abs(market_price_value - impression_price_list[0]), 1)
-
-        # 步骤1：初始化
-        for price in impression_price_list:  # 曝光数据
+        for price in impression_price_list:
             if price not in chosen_count_map:
                 chosen_count_map[price] = 1
             else:
                 chosen_count_map[price] += 1
 
-            if price not in imp_count_map:  # 响应有曝光
+            if price not in imp_count_map:
                 imp_count_map[price] = 1
             else:
                 imp_count_map[price] += 1
 
-        for price in no_impression_price_list:  # 响应未曝光
-            # price_set.add(price)
+        for price in no_impression_price_list:
             if price not in chosen_count_map:
                 chosen_count_map[price] = 1
             else:
@@ -279,34 +203,16 @@ class HierarchicalThompsonSamplingBandit(object):
 
     def bandit(self, media_app_id, position_id, norm_dict, market_price_value,
                impression_price_list, no_impression_price_list, data_pd, optimal_ratio_dict):
-        """
-        e-e探索 thompson sampling方式
-        """
         data_pd = data_pd[data_pd.win_price <= data_pd.response_ecpm]
 
-        """      
-        进行N次Hyper-prior采样
-            先验 + 模拟（played）的总计数：
-                chosen_count_map: played nums，用于计算alpha，beta
-                imp_count_map: success nms，用于计算alpha，beta
-
-            模拟（pull）计数：
-                sampling_chosen_count_map: pull nums，用于计算thompson sampling
-        type A更新计数：
-            type_a_update: k > market_price --> k is played && imp[k] += 1，作为reward的分母
-        """
-
-        # 步骤1：初始化
         chosen_count_map, imp_count_map, estimared_rewards_map,\
             ecpm_alpha, ecpm_beta = self.bandit_init(impression_price_list, no_impression_price_list,
                                                      market_price_value)
         true_chosen_count_map = copy.deepcopy(chosen_count_map)
         true_imp_count_map = copy.deepcopy(imp_count_map)
 
-        # 步骤2：选top
         chosen_key_set = list(chosen_count_map.keys())
         if len(chosen_count_map) > max_search_num:
-            # 为了减少计算时间只取top max_search_num 进行计算
             chosen_count_sorted = sorted(chosen_count_map.items(), key=lambda kv: (kv[1], kv[0]), reverse=True)
             chosen_key_set = set((i[0] for i in chosen_count_sorted[:max_search_num]))
 
@@ -314,15 +220,13 @@ class HierarchicalThompsonSamplingBandit(object):
         price_list = sorted(price_list, reverse=False)
         len_price_list = len(price_list)
 
-        # 步骤3： bandit 计算
-        sampling_chosen_count_map = {}
-        revenue_rate_list = []
-        type_a_update = defaultdict(int)
-        search_count_set = []
-        num_sims = min(sum(chosen_count_map.values()) * sample_ratio, max_sampling_freq)
-
-        N = 20
+        N = 2
         for _ in range(N):
+            sampling_chosen_count_map = {}
+            revenue_rate_list = []
+            type_a_update = defaultdict(int)
+            search_count_set = []
+
             index = np.random.randint(int(len(price_list)/2), len(price_list))
             min_market_price = price_list[index]
             for x in chosen_key_set:
@@ -337,10 +241,8 @@ class HierarchicalThompsonSamplingBandit(object):
             for _, row in data_pd.iterrows():
                 ecpm = row["response_ecpm"]
                 win_price = row["win_price"]
-                # 步骤3：1、select arms
                 max_probs_key, beta_rvs_best = self.select_arm(chosen_key_set, ecpm_alpha, ecpm_beta)
 
-                # 记录上一轮的reward ratio
                 revenue_rate_list.append(beta_rvs_best)
 
                 if max_probs_key == 0:
@@ -351,10 +253,7 @@ class HierarchicalThompsonSamplingBandit(object):
 
                 sampling_chosen_count_map[max_probs_key] += 1
 
-                # 步骤3：update
                 if max_probs_key in imp_count_map:
-                    # np.random.randn(1)[0] -> 改为基于历史数据的采样
-                    # beta 先验  float(imp_count_map[max_probs_key]) / chosen_count_map[max_probs_key]
                     sample_rate = np.random.beta(imp_count_map[max_probs_key],
                                                  max(chosen_count_map[max_probs_key] - imp_count_map[max_probs_key], 1))
                     is_win = np.random.binomial(1, sample_rate)
@@ -371,7 +270,6 @@ class HierarchicalThompsonSamplingBandit(object):
 
                     count = 0
                     if is_win == 1:
-                        # 选择的max_probs_key能曝光，向左搜索（减价）
                         index = price_list.index(max_probs_key)
                         index -= 1
                         while index >= 0:
@@ -387,14 +285,12 @@ class HierarchicalThompsonSamplingBandit(object):
                                                          chosen_count_map[tmp_price] - imp_count_map[tmp_price])
                             is_win = np.random.binomial(1, sample_rate)
                             if is_win == 1:
-                                # 向小于方向探索
                                 index -= 1
                             else:
                                 break
 
                         index += 1
                     else:
-                        # 选择的max_probs_key不能曝光，向右搜索（加价）
                         index += 1
                         while index < len_price_list:
 
@@ -409,7 +305,6 @@ class HierarchicalThompsonSamplingBandit(object):
                                                          chosen_count_map[tmp_price] - imp_count_map[tmp_price])
                             is_win = np.random.binomial(1, sample_rate)
                             if is_win != 1:
-                                # 向大于方向探索
                                 index += 1
                             else:
                                 break
@@ -425,7 +320,7 @@ class HierarchicalThompsonSamplingBandit(object):
                             type_a_update[x] += 1
                             if x not in imp_count_map.keys():
                                 imp_count_map[x] = 0
-                            imp_count_map[x] += 1  # if x == max_probs_key else 0.1
+                            imp_count_map[x] += 1
 
                             weight = self.calculate_reward_weigt_quadratic(x, min_market_price)
                             estimared_rewards_map[x] += 1 * weight
@@ -450,7 +345,6 @@ class HierarchicalThompsonSamplingBandit(object):
                                                                              true_chosen_count_map, true_imp_count_map,
                                                                              norm_dict, loop_index, optimal_ratio_dict)
 
-        # 取reward最大值
         market_price = 0
         market_price_score = 0.0
         for price, value in estimared_rewards_map.items():
@@ -470,7 +364,6 @@ class HierarchicalThompsonSamplingBandit(object):
     def do_process(self, media_app_id, media_position_dict_obj, market_price_dict_obj, impression_price_dict_obj,
                    no_impression_obj, norm_dict, data_pd):
         """
-        根据读取的数据，计算bid shading系数，输出至redis
         :return:
         """
         optimal_ratio_dict = {}
@@ -489,31 +382,20 @@ class HierarchicalThompsonSamplingBandit(object):
         logging.info(f"data_pd_head:{data_pd.head()}")
 
         for position_id in position_set:
-            # self.market_price_dict = media_app_id:position_id:pltv - value
             market_price = {}
             if media_app_id in market_price_dict_obj \
                     and position_id in market_price_dict_obj[media_app_id]:
                 market_price = market_price_dict_obj[media_app_id][position_id]
 
-            # self.impression_price_dict = media_app_id:position_id:pltv - value_list
             impression_price = {}
             if media_app_id in impression_price_dict_obj \
                     and position_id in impression_price_dict_obj[media_app_id]:
                 impression_price = impression_price_dict_obj[media_app_id][position_id]
 
-            # self.impression_price_dict = media_app_id:position_id:pltv - value_list
             no_impression_price = {}
             if media_app_id in no_impression_obj \
                     and position_id in no_impression_obj[media_app_id]:
                 no_impression_price = no_impression_obj[media_app_id][position_id]
-
-            if not No_pltv:
-                if len(market_price) < 1 or len(impression_price) < 1 or len(no_impression_price) < 1:
-                    # 数据不合格跳过
-                    logging.info(f"len(market_price):{len(market_price)} < 1 "
-                                 f"or len(impression_price):{len(impression_price)} < 1 "
-                                 f"or len(no_impression_price):{len(no_impression_price)} < 1")
-                    continue
 
             optimal_ratio_dict = \
                 self.calculate_market_price(media_app_id, position_id, market_price, impression_price,

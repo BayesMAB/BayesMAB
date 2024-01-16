@@ -1,16 +1,15 @@
-import json
-import logging
-import math
-import multiprocessing
-import numpy as np
-from configs.config import max_search_num, max_sampling_freq, Multi_Process, Environment, MAB_SAVE_STEP
+import os
 import copy
+import scipy
+import logging
+import multiprocessing
+import pandas as pd
+import numpy as np
+from datetime import datetime
+from registry import registry
 from collections import defaultdict
 from bandit_public.calculateDelta import CalculateDelta
-import os
-from datetime import datetime
-import pandas as pd
-from registry import registry
+from configs.config import max_search_num, max_sampling_freq, Multi_Process, Environment, MAB_SAVE_STEP
 
 
 if Environment == "offline":
@@ -29,14 +28,12 @@ else:
     )
 
 
-@registry.register('UCBBanditNoPrior')
-class UCBBandit(object):
-    """
-    bid shading
-    """
+@registry.register('BayesUCB')
+class BayesUCBBandit(object):
 
     def __init__(self):
         self.calculate_delta = CalculateDelta()
+        self.expected_ratings = []
 
     def calculate_market_price(self, media_app_id, position_id, market_price_dict, impression_price_dict,
                                no_impression_price, norm_dict, optimal_ratio_dict, data_pd):
@@ -88,7 +85,6 @@ class UCBBandit(object):
         optimal_ratio_dict[key]['chosen_count_map'] = chosen_count_map
         optimal_ratio_dict[key]['imp_count_map'] = imp_count_map
         optimal_ratio_dict[key]['norm_dict'] = norm_dict
-
         return optimal_ratio_dict
 
     def save_bandit_result_during_loop(self, media_app_id, position_id, level,
@@ -140,6 +136,23 @@ class UCBBandit(object):
         # reward = 1
         return reward
 
+
+    def calculate_quantile(self, x, t, x_mean_coeff, x_var_coeff, t_mean_coeff, t_var_coeff, alpha, num_samples):
+        # sample from theta.T.dot(x) and beta.T.dot(x) and create histogram
+        samples_1 = np.random.normal(x.T.dot(x_mean_coeff).item(), x.T.dot(x_var_coeff).dot(x).item(), size=num_samples)
+        samples_2 = np.random.normal(t.T.dot(t_mean_coeff).item(), t.T.dot(t_var_coeff).dot(t).item(), size=num_samples)
+
+        final_samples = samples_1 * samples_2
+
+        # construct histogram
+        pdf, intervals = np.histogram(final_samples, 100)
+        cdf = np.cumsum(pdf / sum(pdf))
+
+        # return quantile
+        for index, value in enumerate(cdf):
+            if value >= alpha:
+                return intervals[index]
+
     def bandit_init(self, impression_price_list, no_impression_price_list, market_price_value):
         estimared_rewards_map = {}
         chosen_count_map = {}
@@ -177,9 +190,6 @@ class UCBBandit(object):
         chosen_count_map, imp_count_map, estimared_rewards_map = self.bandit_init(impression_price_list,
                                                                                   no_impression_price_list,
                                                                                   market_price_value)
-        for k in list(chosen_count_map.keys()):
-            imp_count_map[k] = 1
-            chosen_count_map[k] = 2
 
         true_chosen_count_map = copy.deepcopy(chosen_count_map)
         true_imp_count_map = copy.deepcopy(imp_count_map)
@@ -200,6 +210,7 @@ class UCBBandit(object):
         search_count_set = []
 
         loop_index = 0
+        quantiles = []
         for _, row in data_pd.iterrows():
             ecpm = row["response_ecpm"]
             win_price = row["win_price"]
@@ -210,7 +221,7 @@ class UCBBandit(object):
             for k in chosen_key_set:
                 sampling_count = 0
                 if k in sampling_chosen_count_map:
-                     sampling_count += sampling_chosen_count_map[k]
+                    sampling_count += sampling_chosen_count_map[k]
 
                 if k in imp_count_map:
                     alpha = max(imp_count_map[k], 1)
@@ -219,10 +230,11 @@ class UCBBandit(object):
                     alpha = 1
                     beta = max(chosen_count_map[k], 1)
 
-                I = alpha / (alpha + beta) + (alpha * beta) / ((alpha + beta) ** 2 * (alpha + beta + 1))
-
-                upper_bound_probs = estimared_rewards_map[k] / (type_a_update[k] + 1) * I \
-                                    + self.calculate_delta.sqrt(total_count, sampling_count)
+                if k in imp_count_map:
+                    p = 1. - 1. / (float(imp_count_map[k])/float(chosen_count_map[k]) + 1.)
+                else:
+                    p = 0
+                upper_bound_probs = scipy.special.btdtri(alpha, beta, p)
                 if max_upper_bound_probs < upper_bound_probs:
                     max_upper_bound_probs = upper_bound_probs
                     max_probs_key = k
@@ -341,9 +353,6 @@ class UCBBandit(object):
 
     def do_process(self, media_app_id, media_position_dict_obj, market_price_dict_obj, impression_price_dict_obj,
                    no_impression_obj, norm_dict, data_pd):
-        """
-        :return:
-        """
         optimal_ratio_dict = {}
 
         if media_app_id not in media_position_dict_obj:

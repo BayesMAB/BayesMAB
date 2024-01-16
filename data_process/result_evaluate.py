@@ -1,23 +1,15 @@
-import numpy as np
-import pandas as pd
 import os
 import json
+import numpy as np
 from datetime import datetime
-from configs.config import No_pltv, MAB_SAVE_STEP, EVALUATION_POINT_NUMS, EVALUATION_POINT_STEP
 from data_process.read_data import ReadData
+from configs.config import MAB_SAVE_STEP, EVALUATION_POINT_STEP
 from search.calculate_price_adjustment_gain import calculate_price_adjustment_gain
-# from tools.reward_ratio_result_plot import Reward_Ratio_Image
 
 
 class ResultEvaluate(object):
-    """
-    # 数据读取主类
-    """
 
     def __init__(self, logging, TEST_DATA_PATH):
-        """
-        # 初始化
-        """
         self.logging = logging
         self.data_list = []
         self.cal_price_adjustment_gain = calculate_price_adjustment_gain(self.logging)
@@ -37,19 +29,7 @@ class ResultEvaluate(object):
             if media_app_id not in bandit_result:
                 bandit_result[media_app_id] = {}
 
-            if No_pltv:
-                bandit_result[media_app_id][position_id] = optimal_ratio_dict
-            else:
-                pltv_level = -1
-                if not No_pltv and len(key_list) == 3:
-                    pltv_level = key_list[2]
-
-                position_dict = bandit_dict[media_app_id]
-                if position_id not in position_dict:
-                    position_dict[position_id] = {}
-
-                position_dict[pltv_level] = optimal_ratio_dict
-                bandit_result[media_app_id][position_id] = position_dict
+            bandit_result[media_app_id][position_id] = optimal_ratio_dict
 
         return bandit_result
 
@@ -67,30 +47,24 @@ class ResultEvaluate(object):
                 self.logging.info(f"key:{key}, test_pd is empty!")
                 continue
 
-            # self.logging.info(f"key:{key}, test_pd:\n{test_pd.head()}")
             market_price = result_dict["market_price"]
             chosen_count_map = result_dict["chosen_count_map"]
             imp_count_map = result_dict["imp_count_map"]
             norm_dict = result_dict["norm_dict"]
-            norm_max = float(norm_dict["norm_max"])
-            norm_min = float(norm_dict["norm_min"])
             price, opt_gain, before_gain \
                 = self.cal_price_adjustment_gain.get_adjust_price(test_pd[["response_ecpm", "win_price", "click_num",
                                                                            "target_cpa", "pay_amount"]],
                                                                   market_price, chosen_count_map,
                                                                   imp_count_map, norm_dict)
 
-            # 二价数据集测试效果
             test_pd = test_pd.copy()
             test_pd["shading_ecpm"] = price
             test_pd["income"] = opt_gain
             test_pd["before_income"] = before_gain
 
-            # 去掉未竞得的和数据异常的
             test_pd = test_pd[test_pd.target_price > 0]
             test_pd = test_pd[test_pd.target_price <= test_pd.response_ecpm]
 
-            # 上帝视角搜索最优价格
             total_gain = 0
             best_raio = 0
             for ratio in np.arange(0, 1, 0.01):
@@ -111,18 +85,13 @@ class ResultEvaluate(object):
             test_pd["label_before"] = np.select([
                 (test_pd["response_ecpm"] >= test_pd["target_price"])],
                 [test_pd["response_ecpm"]], default=0)
-            """
-            test_pd["label_increase"] = np.select([
-                (test_pd["virtual_ecpm"] >= test_pd["target_price"])],
-                [test_pd["virtual_ecpm"]], default=0)
-            """
+
             test_pd["label_after"] = np.select([
                 (test_pd["shading_ecpm"] >= test_pd["target_price"])],
                 [test_pd["shading_ecpm"]], default=0)
 
             self.shading_result_list.append(test_pd)
 
-            # 竞得率 & cpm
             win_rate_before = win_rate_after = 1.0
             cpm_after = 0
             if len(test_pd["label_before"]) != 0:
@@ -156,16 +125,6 @@ class ResultEvaluate(object):
         return evaluation
 
     def result_metrics(self, data_pd, label_name):
-        """
-        输入含label的dataframe，输出需要的指标的计算结果
-        输出指标按顺序为:
-            win rate
-            cpm
-            rr
-            revenue
-            surplus
-            price_elasticity
-        """
         tmp_pd = data_pd[data_pd[label_name] > 0]
         if tmp_pd.empty:
             return 0, 0, 0, 0, 0, 0
@@ -178,18 +137,13 @@ class ResultEvaluate(object):
         revenue = np.sum(tmp_pd["win_price"])
 
         surplus = np.sum(tmp_pd["response_ecpm"] - tmp_pd[label_name])
-
-        price_elasticity = 0
-        if cpm_all - cpm != 0:
-            price_elasticity = (1 - win_rate) * cpm_all / (cpm_all - cpm)
-
+        try:
+            price_elasticity = (1 - win_rate) / ((cpm_all - cpm) / cpm_all)
+        except:
+            price_elasticity = 0
         return win_rate, cpm, rr, revenue, surplus, price_elasticity
 
     def result_evaluation_steps(self, result):
-        """
-        评估search
-        输入 {key: {loop_index: { } }
-        """
         evaluation = {}
         self.logging.info(f"result.keys():{result.keys()}\n"
                           f"test_dataset:{self.data_list.head(100)}")
@@ -197,7 +151,6 @@ class ResultEvaluate(object):
         for key, dict in result.items():
             evaluation[key] = {}
             test_pd = self.data_list[self.data_list.key == key]
-            # 去掉未竞得的和数据异常的
             test_pd = test_pd[test_pd.target_price > 0]
             test_pd = test_pd[test_pd.target_price <= test_pd.response_ecpm]
 
@@ -207,7 +160,6 @@ class ResultEvaluate(object):
             else:
                 self.logging.info(f"key:{key}, test_pd data nums: {len(test_pd)}")
 
-            # 上帝视角搜索最优价格，以最大化surplus为目标
             max_surplus = 0
             best_raio = 0
             for ratio in np.arange(0, 1, 0.01):
@@ -231,11 +183,6 @@ class ResultEvaluate(object):
             cpm_win_price = np.mean(test_pd["target_price"])
             revenue_upper_bound = np.sum(test_pd["target_price"])
 
-            record_nums = len(dict)
-            # point_step = record_nums // EVALUATION_POINT_NUMS
-            # if point_step == 0:
-            #     continue
-
             for index, result_dict in dict.items():
                 if 'true' in str(index) or float(index) % (MAB_SAVE_STEP * EVALUATION_POINT_STEP) != 0:
                     continue
@@ -244,8 +191,6 @@ class ResultEvaluate(object):
                 chosen_count_map = result_dict["chosen_count_map"]
                 imp_count_map = result_dict["imp_count_map"]
                 norm_dict = result_dict["norm_dict"]
-                norm_max = float(norm_dict["norm_max"])
-                norm_min = float(norm_dict["norm_min"])
                 price, opt_gain, before_gain \
                     = self.cal_price_adjustment_gain.get_adjust_price(
                         test_pd[["response_ecpm", "win_price", "click_num",
@@ -253,7 +198,6 @@ class ResultEvaluate(object):
                         market_price, chosen_count_map,
                         imp_count_map, norm_dict)
 
-                # 二价数据集测试效果
                 test_pd = test_pd.copy()
                 test_pd["shading_ecpm"] = price
                 test_pd["income"] = opt_gain
@@ -298,10 +242,8 @@ class ResultEvaluate(object):
 
     def do_process(self, bandit_dict, method_name):
 
-        # 步骤一、获取测试数据
         self.read_data()
 
-        # 步骤二、评估结果
         evaluation_dict = self.result_evaluation_steps(bandit_dict)
 
         result_dir = f"./result/{method_name}"

@@ -29,7 +29,7 @@ else:
     )
 
 
-@registry.register('UCBBanditNoPrior')
+@registry.register('BayesMAB')
 class UCBBandit(object):
     """
     bid shading
@@ -88,7 +88,6 @@ class UCBBandit(object):
         optimal_ratio_dict[key]['chosen_count_map'] = chosen_count_map
         optimal_ratio_dict[key]['imp_count_map'] = imp_count_map
         optimal_ratio_dict[key]['norm_dict'] = norm_dict
-
         return optimal_ratio_dict
 
     def save_bandit_result_during_loop(self, media_app_id, position_id, level,
@@ -177,9 +176,6 @@ class UCBBandit(object):
         chosen_count_map, imp_count_map, estimared_rewards_map = self.bandit_init(impression_price_list,
                                                                                   no_impression_price_list,
                                                                                   market_price_value)
-        for k in list(chosen_count_map.keys()):
-            imp_count_map[k] = 1
-            chosen_count_map[k] = 2
 
         true_chosen_count_map = copy.deepcopy(chosen_count_map)
         true_imp_count_map = copy.deepcopy(imp_count_map)
@@ -210,7 +206,7 @@ class UCBBandit(object):
             for k in chosen_key_set:
                 sampling_count = 0
                 if k in sampling_chosen_count_map:
-                     sampling_count += sampling_chosen_count_map[k]
+                    sampling_count += sampling_chosen_count_map[k]
 
                 if k in imp_count_map:
                     alpha = max(imp_count_map[k], 1)
